@@ -1,13 +1,17 @@
 import OpenAI from "openai";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 
+/* ==============================
+   OpenAI client
+============================== */
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY!,
 });
 
-// ==============================
-// SYSTEM PROMPT – V1 FINAL (FULL)
-// ==============================
+/* ==============================
+   SYSTEM PROMPT
+============================== */
 const SYSTEM_PROMPT = `
 You are an AI Sales Strategist & Sales Copilot.
 
@@ -20,6 +24,26 @@ You lead the conversation.
 
 You speak like an experienced salesperson who has seen this problem many times and knows what works.
 You prioritize momentum, clarity, and forward motion over politeness.
+“All section headers must be wrapped in square brackets exactly as defined.”
+SALES MODE RULES (CRITICAL):
+
+If SALES_MODE is "enterprise":
+- Write like an experienced enterprise sales director
+- Assume long sales cycles and multiple stakeholders
+- Emphasize risk, cost of inaction, ROI, and decision process
+- Use formal, precise language
+- Avoid hype and short-term language
+
+If SALES_MODE is "smb":
+- Write like a hands-on founder or early-stage sales leader
+- Assume fast decisions and limited patience
+- Emphasize speed, simplicity, and quick wins
+- Use direct, energetic, almost blunt language
+- Prefer action over analysis
+
+OPENING DIFFERENTIATION (MANDATORY):
+- Enterprise opening must reference risk, scale, or missed revenue
+- SMB opening must reference speed, momentum, or wasted time
 
 COMPANY BRAIN (INTERNAL – NEVER SHOW):
 When the user provides information about their company or offer, interpret and lock it internally as:
@@ -93,66 +117,79 @@ Rules:
 LANGUAGE:
 Always respond in Swedish.
 Use natural, spoken Swedish suitable for real sales conversations.
+STRICT OUTPUT RULES (MANDATORY):
+- You MUST follow the exact structure below.
+- Do NOT rename section titles.
+- Do NOT add extra sections.
+- Do NOT add explanations outside the sections.
+- Keep each section concise and practical.
+
+OUTPUT STRUCTURE (EXACT):
+
+[SUMMARY]
+(max 3 sentences)
+
+[OPENING]
+(1–2 short spoken sentences)
+
+[QUALIFYING QUESTIONS]
+- Maximum 3 questions
+- Prefer assumption-based questions followed by confirmation
+- Avoid generic "how often / what challenges"
+
+[VALUE FRAMING]
+(max 4 bullet points)
+
+OBJECTIONS:
+- Answers must be max 2 sentences
+- First sentence reframes
+- Second sentence pushes forward
+(max 3 objections)
+
+[CLOSING]
+CLOSING:
+- Must assume the next step is happening
+- Avoid asking "would you like"
+- Use time-bound language
+
+[COACH TIPS]
+(max 5 bullet points)
+The OPENING must:
+- Start with a confident assumption
+- Avoid greetings like "kul att prata"
+- Immediately frame a problem or opportunity
+
+If any section violates these rules, rewrite ONLY that section until it complies.
 `;
 
-// ==============================
-// PARSER HELPERS (V1)
-// ==============================
-function extractSection(text: string, start: string, end?: string) {
-  const startIndex = text.indexOf(start);
-  if (startIndex === -1) return "";
+/* ==============================
+   Parser helpers
+============================== */
+function extractTag(output: string, tag: string) {
+  const start = output.indexOf(`[${tag}]`);
+  if (start === -1) return "";
 
-  const sliced = text.slice(startIndex + start.length);
-  if (!end) return sliced.trim();
+  const rest = output.slice(start + tag.length + 2);
+  const nextTagIndex = rest.search(/\[[A-Z\s]+\]/);
 
-  const endIndex = sliced.indexOf(end);
-  if (endIndex === -1) return sliced.trim();
-
-  return sliced.slice(0, endIndex).trim();
+  return (nextTagIndex === -1 ? rest : rest.slice(0, nextTagIndex)).trim();
 }
 
 function parseAiOutput(output: string) {
   return {
-    summary: extractSection(
-      output,
-      "1. Kort sammanfattning av försäljningssituationen",
-      "2."
-    ),
-    opening: extractSection(
-      output,
-      "Öppning:",
-      "Kvalificerings"
-    ),
-    qualifying_questions: extractSection(
-      output,
-      "Kvalificerings",
-      "Värdefram"
-    ),
-    value_framing: extractSection(
-      output,
-      "Värdefram",
-      "3."
-    ),
-    objection_handling: extractSection(
-      output,
-      "3. Vanliga invändningar",
-      "4."
-    ),
-    closing_statement: extractSection(
-      output,
-      "4. Avslutningsstrategi",
-      "5."
-    ),
-    coach_tips: extractSection(
-      output,
-      "5. Tips"
-    ),
+    summary: extractTag(output, "SUMMARY"),
+    opening: extractTag(output, "OPENING"),
+    qualifying_questions: extractTag(output, "QUALIFYING QUESTIONS"),
+    value_framing: extractTag(output, "VALUE FRAMING"),
+    objections: extractTag(output, "OBJECTIONS"),
+    closing: extractTag(output, "CLOSING"),
+    coach_tips: extractTag(output, "COACH TIPS"),
   };
 }
 
-// ==============================
-// API ROUTE
-// ==============================
+/* ==============================
+   API ROUTE
+============================== */
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -162,11 +199,63 @@ export async function POST(req: Request) {
       return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
     }
 
+    /* 2️⃣ Hämta team via team_members */
+    const { data: membership, error: teamErr } = await supabase
+      .from("team_members")
+      .select("team_id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (teamErr || !membership) {
+      return NextResponse.json(
+        { error: "No team connected to user" },
+        { status: 403 }
+      );
+    }
+
+    const team_id = membership.team_id;
+
+    /* 3️⃣ Läs input */
+    const { input } = await req.json();
+
+    if (!input || typeof input !== "string") {
+      return NextResponse.json(
+        { error: "Missing input" },
+        { status: 400 }
+      );
+    }
+
+    /* 4️⃣ Hämta team playbook */
+    const { data: team } = await supabase
+      .from("teams")
+      .select(
+        "sales_motion, tone_default, no_go_phrases, primary_objections"
+      )
+      .eq("id", team_id)
+      .maybeSingle();
+
+    const teamContext = `
+TEAM PLAYBOOK:
+- Sales motion: ${team?.sales_motion ?? "smb"}
+- Default tone: ${team?.tone_default ?? "direct"}
+- Forbidden phrases: ${team?.no_go_phrases ?? "none"}
+- Primary objections: ${team?.primary_objections ?? "none"}
+
+Always follow the team playbook above.
+`;
+
+    /* 5️⃣ OpenAI */
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: input },
+        {
+          role: "system",
+          content: `${teamContext}\n\n${SYSTEM_PROMPT}`,
+        },
+        {
+          role: "user",
+          content: input,
+        },
       ],
     });
 
@@ -193,8 +282,16 @@ export async function POST(req: Request) {
       output: aiOutput,
       result: aiOutput,
       raw_output: aiOutput,
-      parsed,
+      summary: parsed.summary,
+      opening: parsed.opening,
+      qualifying: parsed.qualifying_questions,
+      value_framing: parsed.value_framing,
+      objections: parsed.objections,
+      closing: parsed.closing,
+      coach_tips: parsed.coach_tips,
     });
+
+    return NextResponse.json({ output: aiOutput });
   } catch (error) {
     console.error("GENERATE_ERROR:", error);
     return Response.json({ ok: false, error: "Internal server error" }, { status: 500 });
