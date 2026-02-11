@@ -60,15 +60,35 @@ SALES BEHAVIOR RULES:
 - The closing must never sound optional
 - Always assume there is a next step
 
+
 OUTPUT FORMAT (MANDATORY):
-1. Kort sammanfattning av försäljningssituationen
-2. Rekommenderat försäljningsmanus
-   - Öppning
-   - Kvalificeringsfrågor
-   - Värdeframing
-3. Vanliga invändningar + bästa svar
-4. Avslutningsstrategi (exakt formulering)
-5. Tips för att maximera chansen att stänga
+Return EXACTLY the following section headers, each on its own line, in this exact order:
+
+[SUMMARY]
+Kort sammanfattning av försäljningssituationen.
+
+[OPENING]
+Rekommenderad öppning i samtalet.
+
+[QUALIFYING QUESTIONS]
+Kvalificeringsfrågor som driver affären framåt.
+
+[VALUE FRAMING]
+Hur värdet och konsekvenserna ska ramas in.
+
+[OBJECTIONS]
+Vanliga invändningar och bästa sättet att bemöta dem.
+
+[CLOSING]
+Exakt formulering för avslut eller nästa steg.
+
+[COACH TIPS]
+Praktiska tips för att maximera chansen att stänga.
+
+Rules:
+- Always include ALL sections.
+- Never rename or reorder section headers.
+- Do not add extra headers.
 
 LANGUAGE:
 Always respond in Swedish.
@@ -136,10 +156,10 @@ function parseAiOutput(output: string) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const input: string = body.input;
+    const input = body?.input;
 
-    if (!input) {
-      return Response.json({ error: "Missing input" }, { status: 400 });
+    if (typeof input !== "string" || !input.trim()) {
+      return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
     }
 
     const completion = await openai.chat.completions.create({
@@ -150,46 +170,33 @@ export async function POST(req: Request) {
       ],
     });
 
-    const aiOutput = completion.choices[0].message.content || "";
+    const aiOutput = completion.choices?.[0]?.message?.content ?? "";
     const parsed = parseAiOutput(aiOutput);
 
-const { error } = await supabase.from("sales_scripts").insert({
-  input,
-  raw_output: aiOutput,
+    const { error } = await supabase.from("sales_scripts").insert({
+      input,
+      raw_output: aiOutput,
+      summary: parsed.summary,
+      opening: parsed.opening,
+      qualifying: parsed.qualifying_questions,   // OBS: måste matcha kolumnnamnet i DB
+      value_framing: parsed.value_framing,
+      objections: parsed.objection_handling,
+      closing: parsed.closing_statement,
+      coach_tips: parsed.coach_tips,
+    });
 
-  summary: parsed.summary,
-  opening: parsed.opening,
-  qualifying: parsed.qualifying_questions,
-  value_framing: parsed.value_framing,
-  objections: parsed.objection_handling,
-  closing: parsed.closing_statement,
-  coach_tips: parsed.coach_tips,
-});
+    if (error) console.error("Supabase insert error:", error);
 
-if (error) {
-  console.error("Supabase insert error:", error);
-}
-
-
-await supabase.from("sales_scripts").insert({
-  input,
-  raw_output: aiOutput,
-});
-
-return Response.json({
-  raw_output: aiOutput,
-  parsed,
-});
-    // V1: returnera för debug + UI
+    // Returnera kompatibelt för UI
     return Response.json({
+      ok: true,
+      output: aiOutput,
+      result: aiOutput,
       raw_output: aiOutput,
       parsed,
     });
   } catch (error) {
-    console.error(error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    console.error("GENERATE_ERROR:", error);
+    return Response.json({ ok: false, error: "Internal server error" }, { status: 500 });
   }
 }

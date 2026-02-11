@@ -34,3 +34,11 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🌟 North Star
+
+Vi bygger ett system som hjälper säljare och säljteam att sälja mer konsekvent och smart,
+baserat på hur just deras företag säljer och vem de säljer till.
+
+Produkten samlar teamets sälj‑DNA och erfarenhet och använder AI för att guida varje möte och affär.
+Det är inte ett verktyg för att skriva text – det är en assistent för hur vi säljer,
+med målet att öka close rate i varje samtal.
