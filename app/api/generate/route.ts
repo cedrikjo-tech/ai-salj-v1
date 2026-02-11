@@ -199,6 +199,21 @@ export async function POST(req: Request) {
       return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
     }
 
+    /* Supabase client */
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    /* Hämta user */
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     /* 2️⃣ Hämta team via team_members */
     const { data: membership, error: teamErr } = await supabase
       .from("team_members")
@@ -215,15 +230,6 @@ export async function POST(req: Request) {
 
     const team_id = membership.team_id;
 
-    /* 3️⃣ Läs input */
-    const { input } = await req.json();
-
-    if (!input || typeof input !== "string") {
-      return NextResponse.json(
-        { error: "Missing input" },
-        { status: 400 }
-      );
-    }
 
     /* 4️⃣ Hämta team playbook */
     const { data: team } = await supabase
@@ -267,16 +273,16 @@ Always follow the team playbook above.
       raw_output: aiOutput,
       summary: parsed.summary,
       opening: parsed.opening,
-      qualifying: parsed.qualifying_questions,   // OBS: måste matcha kolumnnamnet i DB
+      qualifying: parsed.qualifying_questions,
       value_framing: parsed.value_framing,
-      objections: parsed.objection_handling,
-      closing: parsed.closing_statement,
+      objections: parsed.objections,
+      closing: parsed.closing,
       coach_tips: parsed.coach_tips,
     });
 
     if (error) console.error("Supabase insert error:", error);
 
-    // Returnera kompatibelt för UI
+    
     return Response.json({
       ok: true,
       output: aiOutput,
@@ -291,9 +297,11 @@ Always follow the team playbook above.
       coach_tips: parsed.coach_tips,
     });
 
-    return NextResponse.json({ output: aiOutput });
   } catch (error) {
     console.error("GENERATE_ERROR:", error);
-    return Response.json({ ok: false, error: "Internal server error" }, { status: 500 });
+    return Response.json(
+      { ok: false, error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }
