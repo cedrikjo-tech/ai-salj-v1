@@ -1,5 +1,7 @@
 "use client";
 
+console.log("NY GENERATE UI LADDAD");
+
 import { useState } from "react";
 
 export default function GenerateUI({
