@@ -1,6 +1,9 @@
 import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+
+
 
 /* ==============================
    OpenAI client
@@ -84,15 +87,35 @@ SALES BEHAVIOR RULES:
 - The closing must never sound optional
 - Always assume there is a next step
 
+
 OUTPUT FORMAT (MANDATORY):
-1. Kort sammanfattning av försäljningssituationen
-2. Rekommenderat försäljningsmanus
-   - Öppning
-   - Kvalificeringsfrågor
-   - Värdeframing
-3. Vanliga invändningar + bästa svar
-4. Avslutningsstrategi (exakt formulering)
-5. Tips för att maximera chansen att stänga
+Return EXACTLY the following section headers, each on its own line, in this exact order:
+
+[SUMMARY]
+Kort sammanfattning av försäljningssituationen.
+
+[OPENING]
+Rekommenderad öppning i samtalet.
+
+[QUALIFYING QUESTIONS]
+Kvalificeringsfrågor som driver affären framåt.
+
+[VALUE FRAMING]
+Hur värdet och konsekvenserna ska ramas in.
+
+[OBJECTIONS]
+Vanliga invändningar och bästa sättet att bemöta dem.
+
+[CLOSING]
+Exakt formulering för avslut eller nästa steg.
+
+[COACH TIPS]
+Praktiska tips för att maximera chansen att stänga.
+
+Rules:
+- Always include ALL sections.
+- Never rename or reorder section headers.
+- Do not add extra headers.
 
 LANGUAGE:
 Always respond in Swedish.
@@ -171,22 +194,40 @@ function parseAiOutput(output: string) {
    API ROUTE
 ============================== */
 export async function POST(req: Request) {
-  const startedAt = Date.now();
-
   try {
-    const supabase = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    const cookieStore = await cookies();
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+        },
+      }
     );
 
-    /* 1️⃣ Auth: hämta user från session */
+    const { input } = await req.json() as { input: string };
+
+    if (!input || typeof input !== "string") {
+      return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
+    }
+
+
+
+    /* ✅ Hämta user */
     const {
       data: { user },
     } = await supabase.auth.getUser();
+console.log("USER:", user);
 
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+
 
     /* 2️⃣ Hämta team via team_members */
     const { data: membership, error: teamErr } = await supabase
@@ -194,6 +235,7 @@ export async function POST(req: Request) {
       .select("team_id")
       .eq("user_id", user.id)
       .single();
+console.log("MEMBERSHIP:", membership);
 
     if (teamErr || !membership) {
       return NextResponse.json(
@@ -204,15 +246,6 @@ export async function POST(req: Request) {
 
     const team_id = membership.team_id;
 
-    /* 3️⃣ Läs input */
-    const { input } = await req.json();
-
-    if (!input || typeof input !== "string") {
-      return NextResponse.json(
-        { error: "Missing input" },
-        { status: 400 }
-      );
-    }
 
     /* 4️⃣ Hämta team playbook */
     const { data: team } = await supabase
@@ -247,27 +280,12 @@ Always follow the team playbook above.
         },
       ],
     });
+console.log("AI RESPONSE RECEIVED");
 
-    const aiOutput = completion.choices[0].message.content ?? "";
-    const latencyMs = Date.now() - startedAt;
-
-    /* 6️⃣ Spara raw generation */
-    await supabase.from("generations").insert({
-      user_id: user.id,
-      team_id,
-      input,
-      output: aiOutput,
-      model: "gpt-4o-mini",
-      latency_ms: latencyMs,
-      prompt_version: "v1.0",
-    });
-
-    /* 7️⃣ Spara strukturerat manus */
+    const aiOutput = completion.choices?.[0]?.message?.content ?? "";
     const parsed = parseAiOutput(aiOutput);
 
-    await supabase.from("sales_scripts").insert({
-      user_id: user.id,
-      team_id,
+    const { error } = await supabase.from("sales_scripts").insert({
       input,
       raw_output: aiOutput,
       summary: parsed.summary,
@@ -279,12 +297,29 @@ Always follow the team playbook above.
       coach_tips: parsed.coach_tips,
     });
 
-    return NextResponse.json({ output: aiOutput });
-  } catch (error) {
-    console.error("GENERATE ERROR:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
+    if (error) console.error("Supabase insert error:", error);
+
+    
+    return Response.json({
+      ok: true,
+      output: aiOutput,
+      result: aiOutput,
+      raw_output: aiOutput,
+      summary: parsed.summary,
+      opening: parsed.opening,
+      qualifying: parsed.qualifying_questions,
+      value_framing: parsed.value_framing,
+      objections: parsed.objections,
+      closing: parsed.closing,
+      coach_tips: parsed.coach_tips,
+    });
+
+   } catch (error: any) {
+    console.error("GENERATE_ERROR_FULL:", error);
+    return Response.json(
+      { ok: false, error: error?.message || "Internal server error" },
       { status: 500 }
     );
   }
 }
+
