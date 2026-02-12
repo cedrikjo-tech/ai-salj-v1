@@ -1,14 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { useRouter } from "next/navigation";
+import { createSupabaseBrowser } from "@/lib/supabaseBrowser";
 
 export default function LoginPage() {
+  const supabase = createSupabaseBrowser();
+  const router = useRouter(); // ✅ hook här uppe
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,8 +28,10 @@ export default function LoginPage() {
         throw error;
       }
 
-      // ✅ Inloggad – redirect
-      window.location.href = "/";
+      // ✅ Inloggad – redirect korrekt
+      router.refresh();
+      router.push("/");
+
     } catch (err: any) {
       setError(err.message || "Fel e‑post eller lösenord");
     } finally {
@@ -41,7 +42,6 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md rounded-2xl border bg-white p-8 shadow-sm">
-        {/* Header */}
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight">
             Logga in till ditt säljteam
@@ -51,7 +51,6 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Form */}
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-1">
             <label className="text-sm font-medium">E‑postadress</label>
@@ -92,7 +91,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Footer */}
         <p className="mt-6 text-center text-sm text-slate-600">
           Har du inget konto?{" "}
           <a href="/signup" className="font-medium text-slate-900 underline">

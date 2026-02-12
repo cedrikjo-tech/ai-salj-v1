@@ -1,6 +1,9 @@
 import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+
+
 
 /* ==============================
    OpenAI client
@@ -192,27 +195,39 @@ function parseAiOutput(output: string) {
 ============================== */
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const input = body?.input;
+    const cookieStore = await cookies();
 
-    if (typeof input !== "string" || !input.trim()) {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+        },
+      }
+    );
+
+    const { input } = await req.json() as { input: string };
+
+    if (!input || typeof input !== "string") {
       return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
     }
 
-    /* Supabase client */
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
 
-    /* Hämta user */
+
+    /* ✅ Hämta user */
     const {
       data: { user },
     } = await supabase.auth.getUser();
+console.log("USER:", user);
 
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+
 
     /* 2️⃣ Hämta team via team_members */
     const { data: membership, error: teamErr } = await supabase
@@ -220,6 +235,7 @@ export async function POST(req: Request) {
       .select("team_id")
       .eq("user_id", user.id)
       .single();
+console.log("MEMBERSHIP:", membership);
 
     if (teamErr || !membership) {
       return NextResponse.json(
@@ -264,6 +280,7 @@ Always follow the team playbook above.
         },
       ],
     });
+console.log("AI RESPONSE RECEIVED");
 
     const aiOutput = completion.choices?.[0]?.message?.content ?? "";
     const parsed = parseAiOutput(aiOutput);
@@ -297,11 +314,12 @@ Always follow the team playbook above.
       coach_tips: parsed.coach_tips,
     });
 
-  } catch (error) {
-    console.error("GENERATE_ERROR:", error);
+   } catch (error: any) {
+    console.error("GENERATE_ERROR_FULL:", error);
     return Response.json(
-      { ok: false, error: "Internal server error" },
+      { ok: false, error: error?.message || "Internal server error" },
       { status: 500 }
     );
   }
 }
+

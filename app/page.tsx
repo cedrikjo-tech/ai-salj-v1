@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+
 
 const ORDER = [
   "SUMMARY",
@@ -90,6 +91,20 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
+
+useEffect(() => {
+  async function fetchLatest() {
+    const res = await fetch("/api/latest-script");
+    const data = await res.json();
+
+    if (data?.script?.raw_output) {
+      setOutput(data.script.raw_output);
+    }
+  }
+
+  fetchLatest();
+}, []);
+
   const [error, setError] = useState<string | null>(null);
 
   async function onGenerate() {

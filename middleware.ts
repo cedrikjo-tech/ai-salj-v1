@@ -1,13 +1,26 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+  let response = NextResponse.next();
 
-  const supabase = createClient(
+  const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return req.cookies.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          response.cookies.set(name, value, options);
+        },
+        remove(name: string, options: any) {
+          response.cookies.set(name, "", { ...options, maxAge: 0 });
+        },
+      },
+    }
   );
 
   const {
@@ -16,19 +29,23 @@ export async function middleware(req: NextRequest) {
 
   const pathname = req.nextUrl.pathname;
 
-  // Tillåt auth-sidor
+  // Tillåt login/signup
   if (pathname.startsWith("/login") || pathname.startsWith("/signup")) {
-    return res;
+    return response;
   }
 
-  // Blockera allt annat om ej inloggad
+  // Om ej inloggad → redirect
   if (!user) {
-    const loginUrl = new URL("/login", req.url);
-    return NextResponse.redirect(loginUrl);
-  }
+  const redirectUrl = new URL("/login", req.url);
+  const redirectResponse = NextResponse.redirect(redirectUrl);
 
-  return res;
+  return redirectResponse;
 }
+
+
+  return response;
+}
+
 export const config = {
   matcher: ["/((?!_next|api|favicon.ico).*)"],
 };
