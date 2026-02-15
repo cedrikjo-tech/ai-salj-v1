@@ -1,12 +1,10 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-
-
 
 const ORDER = [
   "SUMMARY",
@@ -51,6 +49,12 @@ function TabsView({ rawText }: { rawText: string }) {
 
   const [active, setActive] = useState<(typeof ORDER)[number]>(keys[0] ?? "SUMMARY");
 
+  useEffect(() => {
+    if (!keys.length) return;
+    if (!keys.includes(active)) setActive(keys[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawText]);
+
   if (!keys.length) {
     return (
       <div className="rounded-md border bg-white p-4 text-sm whitespace-pre-wrap">
@@ -68,9 +72,7 @@ function TabsView({ rawText }: { rawText: string }) {
             onClick={() => setActive(k)}
             className={[
               "rounded-full px-3 py-1 text-sm transition",
-              active === k
-                ? "bg-black text-white"
-                : "bg-slate-100 text-slate-800 hover:bg-slate-200",
+              active === k ? "bg-black text-white" : "bg-slate-100 text-slate-800 hover:bg-slate-200",
             ].join(" ")}
           >
             {LABELS[k] ?? k}
@@ -90,96 +92,129 @@ function TabsView({ rawText }: { rawText: string }) {
   );
 }
 
+type MenuView = "home" | "history";
+
+type ScriptItem = {
+  id: string;
+  created_at: string;
+  raw_output?: string | null;
+  output?: string | null;
+  result?: string | null;
+  text?: string | null;
+  input?: string | null;
+  company_name?: string | null;
+};
+
 export default function Page() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-const [sessionId, setSessionId] = useState<string | null>(null);
-  // ✅ NYA STATES
+
+  // ✅ Sessions
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // ✅ Historik
+  const [history, setHistory] = useState<ScriptItem[]>([]);
+
+  // ✅ Drawer state
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [history, setHistory] = useState<any[]>([]);
-const [companyName, setCompanyName] = useState("");
-const [sessionCompany, setSessionCompany] = useState<string | null>(null);
+  const [menuView, setMenuView] = useState<MenuView>("home");
 
-
-  // 🔹 Hämta senaste script
+  // Hämta senaste script vid load
   useEffect(() => {
     async function fetchLatest() {
-      const res = await fetch("/api/latest-script");
-      const data = await res.json();
+      try {
+        const res = await fetch("/api/latest-script");
+        const data = await res.json().catch(() => ({}));
 
-      if (data?.script?.raw_output) {
-        setOutput(data.script.raw_output);
+        const raw =
+          data?.script?.raw_output ??
+          data?.script?.output ??
+          data?.script?.result ??
+          data?.script?.text ??
+          "";
+
+        const text = raw ? raw.toString() : "";
+        setOutput(text ? text : null);
+      } catch {
+        setOutput(null);
       }
     }
 
     fetchLatest();
   }, []);
 
-  // 🔹 Hämta historik
-useEffect(() => {
-  async function fetchHistory() {
+  // Hämta historik vid load
+  useEffect(() => {
+    async function fetchHistory() {
+      try {
+        const res = await fetch("/api/scripts");
+        const data = await res.json().catch(() => ({}));
+        setHistory(Array.isArray(data?.scripts) ? data.scripts : []);
+      } catch {
+        setHistory([]);
+      }
+    }
+
+    fetchHistory();
+  }, []);
+
+  async function refreshHistory() {
     try {
       const res = await fetch("/api/scripts");
-      const data = await res.json();
-      setHistory(data?.scripts ?? []);
+      const data = await res.json().catch(() => ({}));
+      setHistory(Array.isArray(data?.scripts) ? data.scripts : []);
     } catch {
-      console.error("Kunde inte hämta historik");
+      // ignore
     }
   }
 
-  fetchHistory();
-}, []);
+  async function createSession(companyName?: string) {
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company_name: companyName || null }),
+    });
 
-async function createSession(companyName: string) {
-  const res = await fetch("/api/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ company_name: companyName }),
-  });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Could not create session");
 
-  const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(data?.error || "Could not create session");
+    setSessionId(data.session.id);
+    return data.session.id as string;
   }
 
-  setSessionId(data.session.id);
-  setSessionCompany(companyName); // 🔥 spara vilket bolag sessionen gäller
+  async function updateSession(status: "won" | "lost" | "demo_booked") {
+    if (!sessionId) return;
 
-  return data.session.id;
-}
+    const res = await fetch(`/api/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
 
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Kunde inte uppdatera session");
+  }
 
   async function onGenerate() {
-  if (!input.trim()) return;
-  if (!companyName.trim()) {
-    setError("Du måste ange kundbolag.");
-    return;
-  }
-
-  let currentSessionId = sessionId;
-
-  // 🔥 Om inget session finns ELLER bolaget har ändrats → skapa ny session
-  if (!currentSessionId || sessionCompany !== companyName) {
-    currentSessionId = await createSession(companyName);
-  }
+    if (!input.trim()) return;
 
     setLoading(true);
     setError(null);
-    setOutput(null);
 
     try {
-      const res = await fetch("/api/generate", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    input,
-    session_id: currentSessionId,
-  }),
-});
+      // ✅ Se till att vi har en session
+      let currentSessionId = sessionId;
+      if (!currentSessionId) {
+        currentSessionId = await createSession("Okänt bolag");
+      }
 
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input, session_id: currentSessionId }),
+      });
 
       const data = await res.json().catch(() => ({}));
 
@@ -187,157 +222,181 @@ async function createSession(companyName: string) {
         throw new Error(data?.error || "Något gick fel. Försök igen.");
       }
 
-      const text = (
-        data?.output ??
-        data?.result ??
-        data?.raw_output ??
-        data?.text ??
-        ""
-      ).toString();
-
+      const text = (data?.output ?? data?.result ?? data?.raw_output ?? data?.text ?? "").toString();
       setOutput(text);
 
-      // 🔥 uppdatera historik direkt efter generate
-      const historyRes = await fetch("/api/scripts");
-      const historyData = await historyRes.json();
-      setHistory(historyData?.scripts ?? []);
+      // 🔄 uppdatera historik efter generate
+      await refreshHistory();
     } catch (e: any) {
       setError(e?.message || "Något gick fel. Försök igen.");
     } finally {
       setLoading(false);
     }
   }
-const groupedHistory = history.reduce((acc: any, item: any) => {
-  const sessionId = item.session_id;
-
-  if (!acc[sessionId]) {
-    acc[sessionId] = {
-      companyName: item.sessions?.company_name || "Utan namn",
-      scripts: [],
-      scriptCount: 0,
-      firstCreated: item.created_at,
-      lastCreated: item.created_at,
-    };
-  }
-
-  acc[sessionId].scripts.push(item);
-  acc[sessionId].scriptCount += 1;
-
-  if (item.created_at < acc[sessionId].firstCreated) {
-    acc[sessionId].firstCreated = item.created_at;
-  }
-
-  if (item.created_at > acc[sessionId].lastCreated) {
-    acc[sessionId].lastCreated = item.created_at;
-  }
-
-  return acc;
-}, {});
-
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      {/* ☰ Historik-knapp */}
-      <div className="absolute top-4 left-4">
+    <div className="h-screen bg-gradient-to-b from-slate-50 to-white">
+      {/* ✅ Meny-knapp längst ut till vänster */}
+      <div className="fixed top-0 left-0 z-50 p-4">
         <button
-          onClick={() => setHistoryOpen(true)}
-          className="rounded-md border px-3 py-2 text-sm hover:bg-slate-50"
+          onClick={() => {
+            setMenuView("home");
+            setHistoryOpen(true);
+          }}
+          className="rounded-md border px-3 py-2 text-sm hover:bg-slate-50 bg-white"
         >
-          ☰ Historik
+          ☰ Meny
         </button>
       </div>
 
-      {/* Drawer */}
+      {/* ✅ Overlay */}
       {historyOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 z-40"
+        <button
+          aria-label="Stäng meny"
           onClick={() => setHistoryOpen(false)}
+          className="fixed inset-0 bg-black/30 z-40"
         />
       )}
 
+      {/* ✅ Drawer (Meny) */}
       <aside
-        className={`fixed top-0 left-0 h-full w-72 bg-white border-r z-50 transform transition-transform duration-200 ${
-          historyOpen ? "translate-x-0" : "-translate-x-full"
-        } flex flex-col`}
+        className={[
+          "fixed top-0 left-0 h-full w-72 bg-white border-r z-50",
+          "transform transition-transform duration-200",
+          historyOpen ? "translate-x-0" : "-translate-x-full",
+          "flex flex-col",
+        ].join(" ")}
       >
-        <div className="p-4 border-b font-semibold flex justify-between">
-          Historik
-          <button onClick={() => setHistoryOpen(false)}>✕</button>
+        <div className="p-4 border-b font-semibold flex items-center justify-between">
+          Meny
+          <button
+            onClick={() => setHistoryOpen(false)}
+            className="rounded-md px-2 py-1 text-sm hover:bg-slate-100"
+          >
+            ✕
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2 space-y-3">
-  {Object.entries(groupedHistory).map(([sessionKey, session]: any) => (
-    <div key={sessionKey} className="space-y-1">
-      <div className="font-semibold text-sm px-2 pt-2">
-        {session.companyName}
-      </div>
+        {/* Menyval */}
+        <div className="p-3 space-y-2 border-b">
+          <button
+            onClick={() => setMenuView("home")}
+            className={[
+              "w-full text-left p-2 rounded text-sm",
+              menuView === "home" ? "bg-slate-100" : "hover:bg-gray-100",
+            ].join(" ")}
+          >
+            Hem
+          </button>
 
-      {session.scripts.map((item: any) => (
-        <button
-          key={item.id}
-          onClick={() => {
-            setOutput(item.raw_output);
-            setHistoryOpen(false);
-          }}
-          className="w-full text-left p-2 rounded hover:bg-gray-100 text-xs text-gray-600"
-        >
-          {new Date(item.created_at).toLocaleDateString()} –{" "}
-          {new Date(item.created_at).toLocaleTimeString()}
-        </button>
-      ))}
-    </div>
-  ))}
-</div>
-</aside>
-
-      <div className="mx-auto max-w-3xl px-4 py-12">
-        <div className="mb-10">
-          <h1 className="text-3xl font-semibold tracking-tight">AI Säljcoach</h1>
-          <p className="mt-2 text-slate-600">
-            Skapa ett skräddarsytt samtalsunderlag inför varje kundmöte.
-          </p>
+          <button
+            onClick={() => setMenuView("history")}
+            className={[
+              "w-full text-left p-2 rounded text-sm",
+              menuView === "history" ? "bg-slate-100" : "hover:bg-gray-100",
+            ].join(" ")}
+          >
+            Historik
+          </button>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Beskriv kund & mål</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Kundföretag, mål & kontext</Label>
-              <div className="space-y-2">
-  <Label>Kundbolag *</Label>
-  <input
-    type="text"
-    value={companyName}
-    onChange={(e) => setCompanyName(e.target.value)}
-    placeholder="Ex: Volvo AB"
-    className="w-full rounded-md border px-3 py-2 text-sm"
-  />
-</div>
+        {/* Innehåll under menyval */}
+        {menuView === "home" && (
+          <div className="p-4 text-sm text-slate-600">
+            Välj en rubrik i menyn.
+          </div>
+        )}
 
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ex: Jag säljer X till Y... Målet är att boka demo…"
-                rows={6}
-              />
-            </div>
+        {menuView === "history" && (
+          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            {history.length === 0 ? (
+              <div className="p-3 text-sm text-slate-500">Ingen historik än.</div>
+            ) : (
+              history.map((item) => {
+                const raw =
+                  item.raw_output ?? item.output ?? item.result ?? item.text ?? "";
+                const title =
+                  item.company_name ||
+                  (item.input ? item.input.slice(0, 28) + (item.input.length > 28 ? "…" : "") : "Utan namn");
 
-            <Button className="w-full" onClick={onGenerate} disabled={loading}>
-              {loading ? "AI tänker…" : "Skapa samtalsunderlag"}
-            </Button>
-
-            {error && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-                {error}
-              </div>
+                return (
+                  <button
+                    key={item.id}
+                    className="w-full text-left p-2 rounded hover:bg-gray-100 text-sm"
+                    onClick={() => {
+                      setOutput(raw ? raw.toString() : "");
+                      setHistoryOpen(false);
+                    }}
+                  >
+                    <div className="font-medium">{title}</div>
+                    <div className="text-xs text-gray-500">
+                      {new Date(item.created_at).toLocaleDateString()}
+                    </div>
+                  </button>
+                );
+              })
             )}
+          </div>
+        )}
+      </aside>
 
-            {output !== null && <TabsView rawText={output || ""} />}
-          </CardContent>
-        </Card>
-      </div>
-    </main>
+      {/* ✅ Main */}
+      <main className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-4 py-12">
+          <div className="mb-10">
+            <h1 className="text-3xl font-semibold tracking-tight">Cebrion Solutions</h1>
+            <p className="mt-2 text-slate-600">
+              Skapa ett skräddarsytt samtalsunderlag inför varje kundmöte.
+            </p>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Beskriv kund & mål</CardTitle>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Kundföretag, mål & kontext</Label>
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ex: Jag säljer X till Y... Målet är att boka demo…"
+                  rows={6}
+                />
+              </div>
+
+              <Button className="w-full" onClick={onGenerate} disabled={loading}>
+                {loading ? "Cebrion tänker…" : "Skapa samtalsunderlag"}
+              </Button>
+
+              {/* ✅ Outcome-knappar (syns när en session finns) */}
+              {sessionId && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <Button variant="outline" onClick={() => updateSession("demo_booked")}>
+                    📅 Demo bokad
+                  </Button>
+                  <Button
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                    onClick={() => updateSession("won")}
+                  >
+                    ✅ Vunnen affär
+                  </Button>
+                  <Button variant="destructive" onClick={() => updateSession("lost")}>
+                    ❌ Förlorad
+                  </Button>
+                </div>
+              )}
+
+              {error && (
+                <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+              )}
+
+              {output !== null && <TabsView rawText={output || ""} />}
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </div>
   );
 }
