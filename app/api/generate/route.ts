@@ -209,13 +209,19 @@ export async function POST(req: Request) {
       }
     );
 
-    const { input } = await req.json() as { input: string };
+    const { input, session_id } = await req.json() as { 
+  input: string; 
+  session_id: string;
+};console.log("SESSION_ID RECEIVED:", session_id);
+
+if (!session_id) {
+  return Response.json({ ok: false, error: "Missing session_id" }, { status: 400 });
+}
+
 
     if (!input || typeof input !== "string") {
       return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
     }
-
-
 
     /* ✅ Hämta user */
     const {
@@ -245,6 +251,19 @@ console.log("MEMBERSHIP:", membership);
     }
 
     const team_id = membership.team_id;
+/* 3️⃣ Verifiera session */
+const { data: session } = await supabase
+  .from("sessions")
+  .select("id, team_id")
+  .eq("id", session_id)
+  .single();
+
+if (!session || session.team_id !== team_id) {
+  return NextResponse.json(
+    { error: "Invalid session" },
+    { status: 403 }
+  );
+}
 
 
     /* 4️⃣ Hämta team playbook */
@@ -286,16 +305,21 @@ console.log("AI RESPONSE RECEIVED");
     const parsed = parseAiOutput(aiOutput);
 
     const { error } = await supabase.from("sales_scripts").insert({
-      input,
-      raw_output: aiOutput,
-      summary: parsed.summary,
-      opening: parsed.opening,
-      qualifying: parsed.qualifying_questions,
-      value_framing: parsed.value_framing,
-      objections: parsed.objections,
-      closing: parsed.closing,
-      coach_tips: parsed.coach_tips,
-    });
+  session_id,           // 🔥 NY
+  team_id,
+  user_id: user.id,
+  input,
+  raw_output: aiOutput,
+  summary: parsed.summary,
+  opening: parsed.opening,
+  qualifying: parsed.qualifying_questions,
+  value_framing: parsed.value_framing,
+  objections: parsed.objections,
+  closing: parsed.closing,
+  coach_tips: parsed.coach_tips,
+});
+
+
 
     if (error) console.error("Supabase insert error:", error);
 

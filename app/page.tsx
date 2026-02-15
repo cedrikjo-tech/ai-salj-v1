@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 
 
+
 const ORDER = [
   "SUMMARY",
   "OPENING",
@@ -67,7 +68,9 @@ function TabsView({ rawText }: { rawText: string }) {
             onClick={() => setActive(k)}
             className={[
               "rounded-full px-3 py-1 text-sm transition",
-              active === k ? "bg-black text-white" : "bg-slate-100 text-slate-800 hover:bg-slate-200",
+              active === k
+                ? "bg-black text-white"
+                : "bg-slate-100 text-slate-800 hover:bg-slate-200",
             ].join(" ")}
           >
             {LABELS[k] ?? k}
@@ -91,24 +94,77 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+const [sessionId, setSessionId] = useState<string | null>(null);
+  // ✅ NYA STATES
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+const [companyName, setCompanyName] = useState("");
+const [sessionCompany, setSessionCompany] = useState<string | null>(null);
 
+
+  // 🔹 Hämta senaste script
+  useEffect(() => {
+    async function fetchLatest() {
+      const res = await fetch("/api/latest-script");
+      const data = await res.json();
+
+      if (data?.script?.raw_output) {
+        setOutput(data.script.raw_output);
+      }
+    }
+
+    fetchLatest();
+  }, []);
+
+  // 🔹 Hämta historik
 useEffect(() => {
-  async function fetchLatest() {
-    const res = await fetch("/api/latest-script");
-    const data = await res.json();
-
-    if (data?.script?.raw_output) {
-      setOutput(data.script.raw_output);
+  async function fetchHistory() {
+    try {
+      const res = await fetch("/api/scripts");
+      const data = await res.json();
+      setHistory(data?.scripts ?? []);
+    } catch {
+      console.error("Kunde inte hämta historik");
     }
   }
 
-  fetchLatest();
+  fetchHistory();
 }, []);
 
-  const [error, setError] = useState<string | null>(null);
+async function createSession(companyName: string) {
+  const res = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ company_name: companyName }),
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data?.error || "Could not create session");
+  }
+
+  setSessionId(data.session.id);
+  setSessionCompany(companyName); // 🔥 spara vilket bolag sessionen gäller
+
+  return data.session.id;
+}
+
 
   async function onGenerate() {
-    if (!input.trim()) return;
+  if (!input.trim()) return;
+  if (!companyName.trim()) {
+    setError("Du måste ange kundbolag.");
+    return;
+  }
+
+  let currentSessionId = sessionId;
+
+  // 🔥 Om inget session finns ELLER bolaget har ändrats → skapa ny session
+  if (!currentSessionId || sessionCompany !== companyName) {
+    currentSessionId = await createSession(companyName);
+  }
 
     setLoading(true);
     setError(null);
@@ -116,10 +172,14 @@ useEffect(() => {
 
     try {
       const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input }),
-      });
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    input,
+    session_id: currentSessionId,
+  }),
+});
+
 
       const data = await res.json().catch(() => ({}));
 
@@ -127,18 +187,109 @@ useEffect(() => {
         throw new Error(data?.error || "Något gick fel. Försök igen.");
       }
 
-      // viktigt: output kan komma som output eller text
-      const text = (data?.output ?? data?.result ?? data?.raw_output ?? data?.text ?? "").toString();
+      const text = (
+        data?.output ??
+        data?.result ??
+        data?.raw_output ??
+        data?.text ??
+        ""
+      ).toString();
+
       setOutput(text);
+
+      // 🔥 uppdatera historik direkt efter generate
+      const historyRes = await fetch("/api/scripts");
+      const historyData = await historyRes.json();
+      setHistory(historyData?.scripts ?? []);
     } catch (e: any) {
       setError(e?.message || "Något gick fel. Försök igen.");
     } finally {
       setLoading(false);
     }
   }
+const groupedHistory = history.reduce((acc: any, item: any) => {
+  const sessionId = item.session_id;
+
+  if (!acc[sessionId]) {
+    acc[sessionId] = {
+      companyName: item.sessions?.company_name || "Utan namn",
+      scripts: [],
+      scriptCount: 0,
+      firstCreated: item.created_at,
+      lastCreated: item.created_at,
+    };
+  }
+
+  acc[sessionId].scripts.push(item);
+  acc[sessionId].scriptCount += 1;
+
+  if (item.created_at < acc[sessionId].firstCreated) {
+    acc[sessionId].firstCreated = item.created_at;
+  }
+
+  if (item.created_at > acc[sessionId].lastCreated) {
+    acc[sessionId].lastCreated = item.created_at;
+  }
+
+  return acc;
+}, {});
+
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+      {/* ☰ Historik-knapp */}
+      <div className="absolute top-4 left-4">
+        <button
+          onClick={() => setHistoryOpen(true)}
+          className="rounded-md border px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          ☰ Historik
+        </button>
+      </div>
+
+      {/* Drawer */}
+      {historyOpen && (
+        <div
+          className="fixed inset-0 bg-black/30 z-40"
+          onClick={() => setHistoryOpen(false)}
+        />
+      )}
+
+      <aside
+        className={`fixed top-0 left-0 h-full w-72 bg-white border-r z-50 transform transition-transform duration-200 ${
+          historyOpen ? "translate-x-0" : "-translate-x-full"
+        } flex flex-col`}
+      >
+        <div className="p-4 border-b font-semibold flex justify-between">
+          Historik
+          <button onClick={() => setHistoryOpen(false)}>✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-3">
+  {Object.entries(groupedHistory).map(([sessionKey, session]: any) => (
+    <div key={sessionKey} className="space-y-1">
+      <div className="font-semibold text-sm px-2 pt-2">
+        {session.companyName}
+      </div>
+
+      {session.scripts.map((item: any) => (
+        <button
+          key={item.id}
+          onClick={() => {
+            setOutput(item.raw_output);
+            setHistoryOpen(false);
+          }}
+          className="w-full text-left p-2 rounded hover:bg-gray-100 text-xs text-gray-600"
+        >
+          {new Date(item.created_at).toLocaleDateString()} –{" "}
+          {new Date(item.created_at).toLocaleTimeString()}
+        </button>
+      ))}
+    </div>
+  ))}
+</div>
+</aside>
+
       <div className="mx-auto max-w-3xl px-4 py-12">
         <div className="mb-10">
           <h1 className="text-3xl font-semibold tracking-tight">AI Säljcoach</h1>
@@ -154,6 +305,17 @@ useEffect(() => {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>Kundföretag, mål & kontext</Label>
+              <div className="space-y-2">
+  <Label>Kundbolag *</Label>
+  <input
+    type="text"
+    value={companyName}
+    onChange={(e) => setCompanyName(e.target.value)}
+    placeholder="Ex: Volvo AB"
+    className="w-full rounded-md border px-3 py-2 text-sm"
+  />
+</div>
+
               <Textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -172,14 +334,10 @@ useEffect(() => {
               </div>
             )}
 
-            {/* viktigt: visa även om output är tom sträng */}
-            {output !== null && (
-  <TabsView rawText={output || ""} />
-)}
+            {output !== null && <TabsView rawText={output || ""} />}
           </CardContent>
         </Card>
       </div>
     </main>
   );
 }
-  

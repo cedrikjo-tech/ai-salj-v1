@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   await supabase.from("team_members").insert({
     team_id: team.id,
     user_id: userId,
-    role: "owner",
+    role: "leader",
   });
 
   return NextResponse.json({ ok: true });

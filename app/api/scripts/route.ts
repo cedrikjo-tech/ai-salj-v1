@@ -17,26 +17,32 @@ export async function GET() {
     }
   );
 
-  // 🔥 Hämta user på säkert sätt
-  const { data, error } = await supabase.auth.getUser();
-  const user = data?.user;
-
-  console.log("AUTH USER:", user);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) {
-    console.log("NO USER FOUND");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: script, error: scriptError } = await supabase
+  const { data, error } = await supabase
     .from("sales_scripts")
-    .select("*")
+    .select(`
+      id,
+      created_at,
+      raw_output,
+      session_id,
+      sessions (
+        company_name
+      )
+    `)
     .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: false });
 
-  console.log("RETURNED SCRIPT:", script);
+  if (error) {
+    console.error("SCRIPTS ERROR:", error);
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
 
-  return NextResponse.json({ script });
+  return NextResponse.json({ scripts: data ?? [] });
 }

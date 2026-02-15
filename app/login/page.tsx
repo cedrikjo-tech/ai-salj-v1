@@ -7,7 +7,6 @@ import { createSupabaseBrowser } from "@/lib/supabaseBrowser";
 export default function LoginPage() {
   const supabase = createSupabaseBrowser();
   const router = useRouter(); // ✅ hook här uppe
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
