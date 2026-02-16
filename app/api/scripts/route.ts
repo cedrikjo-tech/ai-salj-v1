@@ -44,5 +44,11 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ scripts: data ?? [] });
+  const formatted = (data ?? []).map((item: any) => ({
+  ...item,
+  company_name: item.sessions?.company_name ?? null,
+}));
+
+return NextResponse.json({ scripts: formatted });
+
 }

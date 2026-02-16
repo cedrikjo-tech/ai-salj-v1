@@ -103,6 +103,7 @@ type ScriptItem = {
   text?: string | null;
   input?: string | null;
   company_name?: string | null;
+  session_id: string;       // 👈 lägg till denna
 };
 
 export default function Page() {
@@ -110,6 +111,8 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+const [companyName, setCompanyName] = useState("");
+const [sessionCompany, setSessionCompany] = useState<string | null>(null);
 
   // ✅ Sessions
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -170,69 +173,135 @@ export default function Page() {
     }
   }
 
-  async function createSession(companyName?: string) {
-    const res = await fetch("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ company_name: companyName || null }),
-    });
+  async function createSession(companyName: string) {
+  const res = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ company_name: companyName }),
+  });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error || "Could not create session");
+  const data = await res.json();
 
-    setSessionId(data.session.id);
-    return data.session.id as string;
+  if (!res.ok) {
+    throw new Error(data?.error || "Could not create session");
   }
 
-  async function updateSession(status: "won" | "lost" | "demo_booked") {
-    if (!sessionId) return;
+  const id = data.session?.id;
 
-    const res = await fetch(`/api/sessions/${sessionId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error || "Kunde inte uppdatera session");
+  if (!id) {
+    throw new Error("Session ID saknas från backend");
   }
+
+  setSessionId(id);
+  setSessionCompany(companyName);
+
+  return id; // 🔥 SUPER VIKTIGT
+}
+
+
+
+async function updateSession(status: "won" | "lost" | "demo_booked"| "closed") {
+  if (!sessionId) {
+    console.log("SessionId saknas vid update");
+    console.log("NO SESSION ID:", sessionId);
+    console.log("UPDATING SESSION:", sessionId);
+    return;
+  }
+
+
+  const res = await fetch(`/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data?.error || "Kunde inte uppdatera session");
+  }
+
+  // 🔥 Om du vill att genereringen ska försvinna från skärmen efter klick:
+  setOutput(null);
+
+  // 🔄 Uppdatera historiken
+  await refreshHistory();
+}
 
   async function onGenerate() {
-    if (!input.trim()) return;
+  if (!input.trim()) return;
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      // ✅ Se till att vi har en session
-      let currentSessionId = sessionId;
-      if (!currentSessionId) {
-        currentSessionId = await createSession("Okänt bolag");
-      }
-
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input, session_id: currentSessionId }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Något gick fel. Försök igen.");
-      }
-
-      const text = (data?.output ?? data?.result ?? data?.raw_output ?? data?.text ?? "").toString();
-      setOutput(text);
-
-      // 🔄 uppdatera historik efter generate
-      await refreshHistory();
-    } catch (e: any) {
-      setError(e?.message || "Något gick fel. Försök igen.");
-    } finally {
-      setLoading(false);
-    }
+  if (!companyName.trim()) {
+    setError("Du måste ange kundbolag.");
+    return;
   }
+
+  setLoading(true);
+  setError(null);
+
+  try {
+    let currentSessionId = sessionId;
+
+    if (!currentSessionId || sessionCompany !== companyName) {
+      currentSessionId = await createSession(companyName);
+    }
+
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input, session_id: currentSessionId }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(data?.error || "Något gick fel. Försök igen.");
+    }
+
+    const text = (
+      data?.output ??
+      data?.result ??
+      data?.raw_output ??
+      data?.text ??
+      ""
+    ).toString();
+
+    setOutput(text);
+
+    await refreshHistory();
+  } catch (e: any) {
+    setError(e?.message || "Något gick fel. Försök igen.");
+  } finally {
+    setLoading(false);
+  }
+}
+// 🔎 Coach-metadata (osynlig)
+const groupedHistory = history.reduce((acc: any, item: any) => {
+  const sessionId = item.session_id;
+  if (!sessionId) return acc;
+
+  if (!acc[sessionId]) {
+    acc[sessionId] = {
+      companyName: item.company_name || "Utan namn",
+      scriptCount: 0,
+      firstCreated: item.created_at,
+      lastCreated: item.created_at,
+    };
+  }
+
+  acc[sessionId].scriptCount += 1;
+
+  if (item.created_at < acc[sessionId].firstCreated) {
+    acc[sessionId].firstCreated = item.created_at;
+  }
+
+  if (item.created_at > acc[sessionId].lastCreated) {
+    acc[sessionId].lastCreated = item.created_at;
+  }
+
+  return acc;
+}, {});
+
 
   return (
     <div className="h-screen bg-gradient-to-b from-slate-50 to-white">
@@ -324,9 +393,14 @@ export default function Page() {
                     key={item.id}
                     className="w-full text-left p-2 rounded hover:bg-gray-100 text-sm"
                     onClick={() => {
-                      setOutput(raw ? raw.toString() : "");
-                      setHistoryOpen(false);
-                    }}
+  console.log("Clicked:", item);
+
+  setSessionId(item.session_id);
+  setSessionCompany(item.company_name || "");
+  setOutput(raw ? raw.toString() : "");
+  setHistoryOpen(false);
+}}
+
                   >
                     <div className="font-medium">{title}</div>
                     <div className="text-xs text-gray-500">
@@ -354,17 +428,53 @@ export default function Page() {
             <CardHeader>
               <CardTitle>Beskriv kund & mål</CardTitle>
             </CardHeader>
+{sessionId && (
+  <div className="px-6 pb-2">
+    <div className="flex items-center justify-between rounded-md border bg-slate-50 px-3 py-2 text-sm">
+      
+      <div>
+        <span className="font-medium">
+          {sessionCompany || companyName}
+        </span>
+      </div>
+
+      <div>
+        <span
+          className={[
+            "rounded-full px-2 py-1 text-xs font-medium",
+            "bg-emerald-100 text-emerald-700"
+          ].join(" ")}
+        >
+          Aktiv
+        </span>
+      </div>
+
+    </div>
+  </div>
+)}
 
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Kundföretag, mål & kontext</Label>
-                <Textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ex: Jag säljer X till Y... Målet är att boka demo…"
-                  rows={6}
-                />
-              </div>
+  <Label>Kundbolag *</Label>
+  <input
+    type="text"
+    value={companyName}
+    onChange={(e) => setCompanyName(e.target.value)}
+    placeholder="Ex: Volvo AB"
+    className="w-full rounded-md border px-3 py-2 text-sm"
+  />
+</div>
+
+<div className="space-y-2">
+  <Label>Kundföretag, mål & kontext</Label>
+  <Textarea
+    value={input}
+    onChange={(e) => setInput(e.target.value)}
+    placeholder="Ex: Jag säljer X till Y... Målet är att boka demo…"
+    rows={6}
+  />
+</div>
+
 
               <Button className="w-full" onClick={onGenerate} disabled={loading}>
                 {loading ? "Cebrion tänker…" : "Skapa samtalsunderlag"}
@@ -372,21 +482,36 @@ export default function Page() {
 
               {/* ✅ Outcome-knappar (syns när en session finns) */}
               {sessionId && (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <Button variant="outline" onClick={() => updateSession("demo_booked")}>
-                    📅 Demo bokad
-                  </Button>
-                  <Button
-                    className="bg-emerald-600 hover:bg-emerald-700"
-                    onClick={() => updateSession("won")}
-                  >
-                    ✅ Vunnen affär
-                  </Button>
-                  <Button variant="destructive" onClick={() => updateSession("lost")}>
-                    ❌ Förlorad
-                  </Button>
-                </div>
-              )}
+  <div className="space-y-3">
+
+    {/* 🔒 Close session */}
+    <Button
+      variant="secondary"
+      onClick={() => updateSession("closed" as any)}
+      className="w-full"
+    >
+      🔒 Stäng möte
+    </Button>
+
+    {/* 🎯 Outcome-knappar */}
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <Button variant="outline" onClick={() => updateSession("demo_booked")}>
+        📅 Demo bokad
+      </Button>
+      <Button
+        className="bg-emerald-600 hover:bg-emerald-700"
+        onClick={() => updateSession("won")}
+      >
+        ✅ Vunnen affär
+      </Button>
+      <Button variant="destructive" onClick={() => updateSession("lost")}>
+        ❌ Förlorad
+      </Button>
+    </div>
+
+  </div>
+)}
+
 
               {error && (
                 <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
