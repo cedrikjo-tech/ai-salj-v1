@@ -17,16 +17,9 @@ export async function POST(req: Request) {
     }
   );
 
-  // 🔐 Hämta user
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // 🏢 Hämta team membership
   const { data: membership, error: membershipError } = await supabase
     .from("team_members")
     .select("team_id")
@@ -34,29 +27,27 @@ export async function POST(req: Request) {
     .single();
 
   if (membershipError || !membership) {
-    return NextResponse.json(
-      { error: "No team connected to user" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "No team connected to user" }, { status: 403 });
   }
 
-  const { company_name } = await req.json();
+  const body = await req.json().catch(() => ({}));
+  const company_name =
+    typeof body?.company_name === "string" && body.company_name.trim()
+      ? body.company_name.trim()
+      : null;
 
-  // 🗂 Skapa session
   const { data: session, error } = await supabase
     .from("sessions")
     .insert({
       team_id: membership.team_id,
       created_by: user.id,
-      company_name: company_name || null,
+      company_name,
       status: "active",
     })
     .select()
     .single();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   return NextResponse.json({ session });
 }

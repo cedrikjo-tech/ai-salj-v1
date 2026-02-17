@@ -17,23 +17,20 @@ export async function GET() {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data, error } = await supabase
     .from("sales_scripts")
     .select(`
       id,
       created_at,
+      input,
       raw_output,
       session_id,
-      sessions (
-        company_name
+      sessions:session_id (
+        company_name,
+        status
       )
     `)
     .eq("user_id", user.id)
@@ -44,5 +41,15 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  return NextResponse.json({ scripts: data ?? [] });
+  const scripts = (data ?? []).map((s: any) => ({
+    id: s.id,
+    created_at: s.created_at,
+    input: s.input ?? null,
+    raw_output: s.raw_output ?? null,
+    session_id: s.session_id ?? null,
+    company_name: s.sessions?.company_name ?? null,
+    status: s.sessions?.status ?? "active",
+  }));
+
+  return NextResponse.json({ scripts });
 }
