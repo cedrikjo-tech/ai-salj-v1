@@ -1,9 +1,6 @@
 import OpenAI from "openai";
-import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-
-
 
 /* ==============================
    OpenAI client
@@ -16,179 +13,52 @@ const openai = new OpenAI({
    SYSTEM PROMPT
 ============================== */
 const SYSTEM_PROMPT = `
-You are an AI Sales Strategist & Sales Copilot.
+You are an AI Sales Strategist operating like a top 1% enterprise seller.
+Your objective is to move the deal forward and increase the probability of a committed next step.
 
-Your job is not just to generate sales copy, but to think and act like a top 1% salesperson, sales coach, and deal strategist.
-Your primary objective is to move the buyer toward a decision and maximize the likelihood of closing.
+Return ONLY valid JSON in this exact structure:
 
-You are not neutral.
-You are not passive.
-You lead the conversation.
-
-You speak like an experienced salesperson who has seen this problem many times and knows what works.
-You prioritize momentum, clarity, and forward motion over politeness.
-“All section headers must be wrapped in square brackets exactly as defined.”
-SALES MODE RULES (CRITICAL):
-
-If SALES_MODE is "enterprise":
-- Write like an experienced enterprise sales director
-- Assume long sales cycles and multiple stakeholders
-- Emphasize risk, cost of inaction, ROI, and decision process
-- Use formal, precise language
-- Avoid hype and short-term language
-
-If SALES_MODE is "smb":
-- Write like a hands-on founder or early-stage sales leader
-- Assume fast decisions and limited patience
-- Emphasize speed, simplicity, and quick wins
-- Use direct, energetic, almost blunt language
-- Prefer action over analysis
-
-OPENING DIFFERENTIATION (MANDATORY):
-- Enterprise opening must reference risk, scale, or missed revenue
-- SMB opening must reference speed, momentum, or wasted time
-
-COMPANY BRAIN (INTERNAL – NEVER SHOW):
-When the user provides information about their company or offer, interpret and lock it internally as:
-- Product / Service
-- Target Customer (ICP)
-- Core Customer Problems
-- Business Value / ROI
-- Common Objections
-- Differentiators
-- Pricing Logic (if mentioned)
-- Optimal Sales Style
-
-Assume this information is true.
-If information is missing, make strong, realistic assumptions.
-Never ask the user to clarify missing information.
-
-PRIMARY OBJECTIVE:
-Generate a personalized, situation-aware sales script that:
-- Focuses on the customer’s problems and consequences
-- Creates momentum and direction
-- Naturally leads to a clear next step or close
-
-The script must include:
-- Opening
-- Qualifying questions
-- Value framing
-- Objection handling
-- A clear and confident closing
-
-SALES BEHAVIOR RULES:
-- Do not sound like marketing copy
-- Do not ask soft or permission-based questions
-- Lead the buyer instead of following them
-- Prefer confident assumptions followed by confirmation
-- Reduce the total number of questions
-- Tie problems to revenue, time, or risk
-- Neutralize objections and move forward
-- The closing must never sound optional
-- Always assume there is a next step
-
-
-OUTPUT FORMAT (MANDATORY):
-Return EXACTLY the following section headers, each on its own line, in this exact order:
-
-[SUMMARY]
-Kort sammanfattning av försäljningssituationen.
-
-[OPENING]
-Rekommenderad öppning i samtalet.
-
-[QUALIFYING QUESTIONS]
-Kvalificeringsfrågor som driver affären framåt.
-
-[VALUE FRAMING]
-Hur värdet och konsekvenserna ska ramas in.
-
-[OBJECTIONS]
-Vanliga invändningar och bästa sättet att bemöta dem.
-
-[CLOSING]
-Exakt formulering för avslut eller nästa steg.
-
-[COACH TIPS]
-Praktiska tips för att maximera chansen att stänga.
+{
+  "script_output": {
+    "summary": "",
+    "opening": "",
+    "qualifying_questions": [],
+    "value_framing": [],
+    "objections": [],
+    "closing": "",
+    "coach_tips": []
+  },
+  "deal_analysis": {
+    "deal_stage": "",
+    "probability": 0,
+    "next_step": "",
+    "risk_score": 0
+  }
+}
 
 Rules:
-- Always include ALL sections.
-- Never rename or reorder section headers.
-- Do not add extra headers.
-
-LANGUAGE:
-Always respond in Swedish.
-Use natural, spoken Swedish suitable for real sales conversations.
-STRICT OUTPUT RULES (MANDATORY):
-- You MUST follow the exact structure below.
-- Do NOT rename section titles.
-- Do NOT add extra sections.
-- Do NOT add explanations outside the sections.
-- Keep each section concise and practical.
-
-OUTPUT STRUCTURE (EXACT):
-
-[SUMMARY]
-(max 3 sentences)
-
-[OPENING]
-(1–2 short spoken sentences)
-
-[QUALIFYING QUESTIONS]
-- Maximum 3 questions
-- Prefer assumption-based questions followed by confirmation
-- Avoid generic "how often / what challenges"
-
-[VALUE FRAMING]
-(max 4 bullet points)
-
-OBJECTIONS:
-- Answers must be max 2 sentences
-- First sentence reframes
-- Second sentence pushes forward
-(max 3 objections)
-
-[CLOSING]
-CLOSING:
-- Must assume the next step is happening
-- Avoid asking "would you like"
-- Use time-bound language
-
-[COACH TIPS]
-(max 5 bullet points)
-The OPENING must:
-- Start with a confident assumption
-- Avoid greetings like "kul att prata"
-- Immediately frame a problem or opportunity
-
-If any section violates these rules, rewrite ONLY that section until it complies.
+- All text must be in Swedish.
+- Arrays must be arrays of strings.
+- No explanations.
+- No extra keys.
+- No markdown.
 `;
 
 /* ==============================
-   Parser helpers
+   SALES BRAIN
 ============================== */
-function extractTag(output: string, tag: string) {
-  const start = output.indexOf(`[${tag}]`);
-  if (start === -1) return "";
+const SALES_BRAIN = `
+[SALES BRAIN – VÄRDEKEDJA & KUNDPROCESS]
+- Kartlägg kundens interna värdekedja: inflöde → arbete → beslut → leverans → uppföljning.
+- Identifiera var tid, pengar eller risk läcker.
+- Driv kundens beslutsprocess: stakeholders, kriterier, risker, tidslinje.
+- Använd hypotesbaserade frågor.
 
-  const rest = output.slice(start + tag.length + 2);
-  const nextTagIndex = rest.search(/\[[A-Z\s]+\]/);
-
-  return (nextTagIndex === -1 ? rest : rest.slice(0, nextTagIndex)).trim();
-}
-
-function parseAiOutput(output: string) {
-  return {
-    summary: extractTag(output, "SUMMARY"),
-    opening: extractTag(output, "OPENING"),
-    qualifying_questions: extractTag(output, "QUALIFYING QUESTIONS"),
-    value_framing: extractTag(output, "VALUE FRAMING"),
-    objections: extractTag(output, "OBJECTIONS"),
-    closing: extractTag(output, "CLOSING"),
-    coach_tips: extractTag(output, "COACH TIPS"),
-  };
-}
+[STIL]
+- Börja med en tydlig diagnostisk hypotes.
+- Koppla alltid till pengar, tid, tillväxt eller risk.
+- Var direkt och beslutsdrivande.
+`;
 
 /* ==============================
    API ROUTE
@@ -209,141 +79,168 @@ export async function POST(req: Request) {
       }
     );
 
-    const { input, session_id } = await req.json() as { 
-  input: string; 
-  session_id: string;
-};console.log("SESSION_ID RECEIVED:", session_id);
+    const { input, session_id } = await req.json();
 
-if (!session_id) {
-  return Response.json({ ok: false, error: "Missing session_id" }, { status: 400 });
-}
-
+    if (!session_id) {
+      return Response.json({ ok: false, error: "Missing session_id" }, { status: 400 });
+    }
 
     if (!input || typeof input !== "string") {
       return Response.json({ ok: false, error: "Missing input" }, { status: 400 });
     }
 
-    /* ✅ Hämta user */
+    /* 🔐 1️⃣ User */
     const {
       data: { user },
     } = await supabase.auth.getUser();
-console.log("USER:", user);
 
     if (!user) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-
-
-    /* 2️⃣ Hämta team via team_members */
-    const { data: membership, error: teamErr } = await supabase
+    /* 🔐 2️⃣ Team */
+    const { data: membership } = await supabase
       .from("team_members")
-      .select("team_id")
+      .select("team_id, role")
       .eq("user_id", user.id)
       .single();
-console.log("MEMBERSHIP:", membership);
 
-    if (teamErr || !membership) {
-      return NextResponse.json(
-        { error: "No team connected to user" },
-        { status: 403 }
-      );
+    if (!membership) {
+      return Response.json({ error: "No team found" }, { status: 403 });
+    }
+
+    if (membership.role === "viewer") {
+      return Response.json({ error: "Insufficient permissions" }, { status: 403 });
     }
 
     const team_id = membership.team_id;
-/* 3️⃣ Verifiera session */
-const { data: session } = await supabase
-  .from("sessions")
-  .select("id, team_id")
-  .eq("id", session_id)
-  .single();
 
-if (!session || session.team_id !== team_id) {
-  return NextResponse.json(
-    { error: "Invalid session" },
-    { status: 403 }
-  );
-}
-
-
-    /* 4️⃣ Hämta team playbook */
     const { data: team } = await supabase
       .from("teams")
-      .select(
-        "sales_motion, tone_default, no_go_phrases, primary_objections"
-      )
+      .select("sales_motion, closing_style, risk_tolerance")
       .eq("id", team_id)
       .maybeSingle();
 
-    const teamContext = `
-TEAM PLAYBOOK:
-- Sales motion: ${team?.sales_motion ?? "smb"}
-- Default tone: ${team?.tone_default ?? "direct"}
-- Forbidden phrases: ${team?.no_go_phrases ?? "none"}
-- Primary objections: ${team?.primary_objections ?? "none"}
+    /* 🔐 3️⃣ Session check */
+    const { data: session } = await supabase
+      .from("sessions")
+      .select("team_id, probability")
+      .eq("id", session_id)
+      .single();
 
-Always follow the team playbook above.
+    if (!session || session.team_id !== team_id) {
+      return Response.json({ error: "Invalid session" }, { status: 403 });
+    }
+
+    /* 🧠 Team Context */
+    const teamContext = `
+TEAM STRATEGY PROFILE:
+Sales motion: ${team?.sales_motion ?? "smb"}
+Closing style: ${team?.closing_style ?? "assumptive"}
+Risk tolerance: ${team?.risk_tolerance ?? "medium"}
 `;
 
-    /* 5️⃣ OpenAI */
+    /* 🤖 4️⃣ Run OpenAI */
+    const start = Date.now();
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `${teamContext}\n\n${SYSTEM_PROMPT}`,
+          content: `
+${SALES_BRAIN}
+
+${teamContext}
+
+${SYSTEM_PROMPT}
+          `,
         },
         {
           role: "user",
           content: input,
         },
       ],
+      response_format: { type: "json_object" },
+      max_tokens: 900,
+      temperature: 0.7,
     });
-console.log("AI RESPONSE RECEIVED");
 
-    const aiOutput = completion.choices?.[0]?.message?.content ?? "";
-    const parsed = parseAiOutput(aiOutput);
+    const raw = completion.choices?.[0]?.message?.content ?? "{}";
 
-    const { error } = await supabase.from("sales_scripts").insert({
-  session_id,           // 🔥 NY
-  team_id,
-  user_id: user.id,
-  input,
-  raw_output: aiOutput,
-  summary: parsed.summary,
-  opening: parsed.opening,
-  qualifying: parsed.qualifying_questions,
-  value_framing: parsed.value_framing,
-  objections: parsed.objections,
-  closing: parsed.closing,
-  coach_tips: parsed.coach_tips,
-});
+    let parsedResponse: any;
 
+    try {
+      parsedResponse = JSON.parse(raw);
+    } catch (err) {
+      console.error("JSON PARSE ERROR:", raw);
+      return Response.json(
+        { ok: false, error: "Invalid AI JSON response" },
+        { status: 500 }
+      );
+    }
 
+    const script = parsedResponse.script_output;
+    const dealAnalysis = parsedResponse.deal_analysis;
 
-    if (error) console.error("Supabase insert error:", error);
+    const duration = Date.now() - start;
+    console.log("AI latency:", duration, "ms");
 
-    
+    /* 💾 5️⃣ Save script */
+    await supabase.from("sales_scripts").insert({
+      session_id,
+      team_id,
+      user_id: user.id,
+      input,
+      raw_output: JSON.stringify(script),
+      summary: script.summary,
+      opening: script.opening,
+      qualifying: script.qualifying_questions,
+      value_framing: script.value_framing,
+      objections: script.objections,
+      closing: script.closing,
+      coach_tips: script.coach_tips,
+    });
+
+    /* 🧠 6️⃣ Update session intelligence */
+    const currentProbability = session.probability ?? 20;
+    let newProbability = dealAnalysis?.probability ?? currentProbability;
+
+    newProbability = Math.max(0, Math.min(100, newProbability));
+
+    const maxChange = 10;
+
+    if (newProbability > currentProbability + maxChange) {
+      newProbability = currentProbability + maxChange;
+    }
+
+    if (newProbability < currentProbability - maxChange) {
+      newProbability = currentProbability - maxChange;
+    }
+
+    await supabase
+      .from("sessions")
+      .update({
+        deal_stage: dealAnalysis?.deal_stage,
+        probability: newProbability,
+        next_step: dealAnalysis?.next_step,
+        risk_score: dealAnalysis?.risk_score,
+      })
+      .eq("id", session_id);
+
+    /* ✅ Final response */
     return Response.json({
       ok: true,
-      output: aiOutput,
-      result: aiOutput,
-      raw_output: aiOutput,
-      summary: parsed.summary,
-      opening: parsed.opening,
-      qualifying: parsed.qualifying_questions,
-      value_framing: parsed.value_framing,
-      objections: parsed.objections,
-      closing: parsed.closing,
-      coach_tips: parsed.coach_tips,
+      script,
+      deal_analysis: dealAnalysis,
     });
 
-   } catch (error: any) {
+  } catch (error: any) {
     console.error("GENERATE_ERROR_FULL:", error);
+
     return Response.json(
       { ok: false, error: error?.message || "Internal server error" },
       { status: 500 }
     );
   }
 }
-
